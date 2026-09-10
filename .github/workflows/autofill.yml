@@ -12,7 +12,7 @@ on:
         default: true
         type: boolean
       submit_test:
-        description: 'Проверить кнопку Submit на ПУСТОЙ форме (отправка блокируется)'
+        description: 'РЕАЛЬНО отправить тестовую форму за 09/08/2026'
         required: true
         default: false
         type: boolean
