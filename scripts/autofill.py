@@ -97,7 +97,7 @@ def collect_diagnostics(page, response_status=None) -> None:
 
 
 def find_form_fields(page):
-    """Find visible editable fields in the page and any iframes."""
+    """Find visible editable text/date fields; custom dropdowns are handled by label below."""
     candidates = []
     selectors = [
         'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"])',
@@ -117,6 +117,27 @@ def find_form_fields(page):
                     pass
 
     return candidates
+
+
+def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
+    """Select a value from Smartsheet's custom role=combobox control by its label."""
+    combo_input = frame.get_by_label(label, exact=True)
+    combo_input.wait_for(state="visible", timeout=10000)
+    combo_input.click()
+
+    # Smartsheet renders the menu as a listbox/option set after the combobox opens.
+    option = frame.get_by_role("option", name=value, exact=True)
+    option.wait_for(state="visible", timeout=10000)
+    option.click()
+
+    # Confirm that the custom combobox now contains the selected value.
+    if combo_input.input_value() != value:
+        raise RuntimeError(
+            f"Не удалось выбрать '{value}' в поле '{label}'. "
+            f"Текущее значение: '{combo_input.input_value()}'."
+        )
+
+    print(f"Dropdown '{label}': {value}")
 
 
 def fill_form(test_mode: bool = False) -> None:
@@ -165,14 +186,30 @@ def fill_form(test_mode: bool = False) -> None:
                 )
 
             values = get_field_values(today_str)
-            for i, value in enumerate(values):
-                field = fields[i]
+
+            # The first field is a normal text input.
+            fields[0].scroll_into_view_if_needed()
+            fields[0].click()
+            fields[0].fill(values[0])
+            fields[0].dispatch_event("input")
+            fields[0].dispatch_event("change")
+            print(f"Поле 1: {values[0]}")
+
+            # These two are Smartsheet custom comboboxes, not ordinary text fields.
+            # Filling their input with text does not select an actual option.
+            form_frame = page.main_frame
+            select_smartsheet_dropdown(form_frame, "Dayshift/Nightshift", values[1])
+            select_smartsheet_dropdown(form_frame, "Staff/Craft/Visitor/Sub", values[2])
+
+            # Remaining fields: Discipline, Time In, Date.
+            for index, value in ((3, values[3]), (4, values[4]), (5, values[5])):
+                field = fields[index]
                 field.scroll_into_view_if_needed()
                 field.click()
                 field.fill(value)
                 field.dispatch_event("input")
                 field.dispatch_event("change")
-                print(f"Поле {i + 1}: {value}")
+                print(f"Поле {index + 1}: {value}")
 
             page.wait_for_timeout(1500)
 
