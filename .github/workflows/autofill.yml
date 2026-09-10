@@ -37,15 +37,12 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
-        run: python scripts/autofill.py
+        run: xvfb-run -a python scripts/autofill.py
 
       - name: Upload test diagnostics
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode == true && always() }}
         uses: actions/upload-artifact@v4
         with:
           name: test-mode-diagnostics
-          path: |
-            test-mode.png
-            diagnostic.txt
-            diagnostic.html
+          path: diagnostics/
           if-no-files-found: ignore
