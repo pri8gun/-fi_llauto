@@ -39,10 +39,13 @@ jobs:
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
         run: python scripts/autofill.py
 
-      - name: Upload test screenshot
+      - name: Upload test diagnostics
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode == true && always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-mode-screenshot
-          path: test-mode.png
+          name: test-mode-diagnostics
+          path: |
+            test-mode.png
+            diagnostic.txt
+            diagnostic.html
           if-no-files-found: ignore
