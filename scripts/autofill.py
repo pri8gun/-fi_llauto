@@ -120,9 +120,12 @@ def find_form_fields(page):
 
 
 def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
-    """Select a value from Smartsheet's custom Lodestar combobox."""
-    # Smartsheet renders a real <label for="...">, but get_by_label() does not
-    # reliably resolve this custom combobox in the GitHub Actions browser.
+    """Select a Smartsheet Lodestar combobox using its keyboard interface.
+
+    Smartsheet renders the dropdown menu dynamically (and may portal it outside
+    the combobox), so selecting by a dynamic listbox ID is unreliable. The
+    keyboard path works directly through the accessible combobox control.
+    """
     label_locator = frame.locator("label").filter(has_text=label).first
     label_locator.wait_for(state="visible", timeout=10000)
 
@@ -133,28 +136,30 @@ def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
     combo_input = frame.locator(f"#{input_id}")
     combo_input.wait_for(state="visible", timeout=10000)
     combo_input.scroll_into_view_if_needed()
+    combo_input.click()
 
-    toggle = frame.locator(f"#{input_id}--toggle-button")
-    toggle.click()
+    # Type the exact desired option into the combobox. Smartsheet filters the
+    # available choices as the text is entered, then ArrowDown + Enter commits
+    # the highlighted choice. This avoids relying on generated menu IDs.
+    combo_input.fill(value)
+    frame.wait_for_timeout(500)
+    combo_input.press("ArrowDown")
+    combo_input.press("Enter")
+    frame.wait_for_timeout(500)
 
-    listbox_id = combo_input.get_attribute("aria-controls")
-    if not listbox_id:
-        raise RuntimeError(f"У dropdown '{label}' отсутствует aria-controls.")
+    actual = combo_input.input_value().strip()
+    if actual != value:
+        # Some Lodestar versions keep the input value empty until the menu is
+        # committed. Retry once through the toggle button + keyboard path.
+        toggle = frame.locator(f"#{input_id}--toggle-button")
+        toggle.click()
+        frame.wait_for_timeout(300)
+        combo_input.press("Home")
+        combo_input.press("ArrowDown")
+        combo_input.press("Enter")
+        frame.wait_for_timeout(500)
+        actual = combo_input.input_value().strip()
 
-    listbox = frame.locator(f"#{listbox_id}")
-    listbox.wait_for(state="visible", timeout=10000)
-
-    # Prefer the semantic option role. If Smartsheet changes the role markup,
-    # fall back to an exact visible text match inside the opened listbox.
-    option = listbox.get_by_role("option", name=value, exact=True)
-    if option.count() == 0:
-        option = listbox.get_by_text(value, exact=True)
-
-    option.first.wait_for(state="visible", timeout=10000)
-    option.first.click()
-
-    frame.wait_for_timeout(300)
-    actual = combo_input.input_value()
     if actual != value:
         raise RuntimeError(
             f"Не удалось выбрать '{value}' в поле '{label}'. Текущее значение: '{actual}'."
