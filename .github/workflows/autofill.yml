@@ -2,10 +2,15 @@ name: Smartsheet Autofill
 
 on:
   schedule:
-    # 14:30 UTC and 15:30 UTC cover 07:30 Vancouver in both PST and PDT.
     - cron: '30 14 * * *'
     - cron: '30 15 * * *'
   workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Заполнить форму, но НЕ нажимать Submit'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   autofill:
@@ -31,4 +36,13 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
         run: python scripts/autofill.py
+
+      - name: Upload test screenshot
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode == true && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-mode-screenshot
+          path: test-mode.png
+          if-no-files-found: ignore
