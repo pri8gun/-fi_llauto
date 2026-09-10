@@ -76,11 +76,7 @@ def find_form_fields(page):
 
 
 def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
-    """Select an exact option from a Smartsheet Lodestar combobox.
-
-    Do not use ArrowDown after typing: in the GitHub Actions browser it can
-    select the wrong highlighted option (observed as Nightshift for Dayshift).
-    """
+    """Select an exact option from a Smartsheet Lodestar combobox."""
     label_locator = frame.locator("label").filter(has_text=label).first
     label_locator.wait_for(state="visible", timeout=10000)
     input_id = label_locator.get_attribute("for")
@@ -88,14 +84,14 @@ def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
     combo = frame.locator(f"#{input_id}")
     combo.wait_for(state="visible", timeout=10000); combo.scroll_into_view_if_needed()
 
-    # Open by clicking the actual combobox input, then type the exact value.
-    # Enter commits the typed/filter value without changing it to the next item.
+    # Open the combobox and type the exact value. Do not use ArrowDown:
+    # it previously selected the wrong item (e.g. Nightshift instead of Dayshift).
     combo.click(); combo.fill(value); frame.wait_for_timeout(700); combo.press("Enter"); frame.wait_for_timeout(700)
     actual = combo.input_value().strip()
 
     if actual != value:
-        # If this Lodestar build requires a mouse selection, locate the visible
-        # exact option globally. The menu may be rendered in a portal.
+        # Lodestar may render the menu in a portal. Click the visible exact
+        # option with force=True because the combobox input can overlap it.
         exact = frame.get_by_text(value, exact=True)
         visible = []
         for i in range(exact.count()):
@@ -103,7 +99,8 @@ def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
                 if exact.nth(i).is_visible(): visible.append(exact.nth(i))
             except Exception: pass
         if visible:
-            visible[-1].click(); frame.wait_for_timeout(700)
+            visible[-1].click(force=True)
+            frame.wait_for_timeout(700)
         actual = combo.input_value().strip()
 
     if actual != value:
