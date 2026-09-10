@@ -11,6 +11,11 @@ on:
         required: true
         default: true
         type: boolean
+      submit_test:
+        description: 'Проверить кнопку Submit на ПУСТОЙ форме (отправка блокируется)'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   autofill:
@@ -37,10 +42,11 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
+          SUBMIT_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.submit_test || false }}
         run: xvfb-run -a python scripts/autofill.py
 
       - name: Upload test diagnostics
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode == true && always() }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.test_mode == true || inputs.submit_test == true) && always() }}
         uses: actions/upload-artifact@v6
         with:
           name: test-mode-diagnostics
