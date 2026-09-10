@@ -1,0 +1,34 @@
+name: Smartsheet Autofill
+
+on:
+  schedule:
+    # 14:30 UTC and 15:30 UTC cover 07:30 Vancouver in both PST and PDT.
+    - cron: '30 14 * * *'
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  autofill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run autofill
+        env:
+          WORKER_NAME: ${{ secrets.WORKER_NAME }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: python scripts/autofill.py
