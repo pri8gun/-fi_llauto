@@ -1,33 +1,15 @@
-"""
-Автоматическая отправка формы Smartsheet "Woodfibre Daily Head Count"
-только в дни, входящие в заданные диапазоны рабочей ротации.
-
-Запускается GitHub Actions по расписанию (см. .github/workflows/autofill.yml).
-"""
+"""Automated Smartsheet form submission for the Woodfibre daily head count."""
 
 import os
 import smtplib
 import sys
-from datetime import date
+from datetime import date, datetime
 from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
-from datetime import datetime
 
 from playwright.sync_api import sync_playwright
 
 FORM_URL = "https://app.smartsheet.com/b/form/2bc79c969d504a948791cb84fcf751e7"
-
-
-def get_field_values() -> list[str]:
-    return [
-        os.environ["WORKER_NAME"],
-        "Dayshift",
-        "Craft",
-        "Mechanical",
-        "7:30",
-    ]
-
-
 TIMEZONE = "America/Vancouver"
 
 WORK_RANGES_2026 = [
@@ -39,18 +21,25 @@ WORK_RANGES_2026 = [
 ]
 
 
+def get_field_values(today_str: str) -> list[str]:
+    return [
+        os.environ["WORKER_NAME"],
+        "Dayshift",
+        "Craft",
+        "Mechanical",
+        "7:30",
+        today_str,
+    ]
+
+
 def is_work_day(today: date) -> bool:
     for m1, d1, m2, d2 in WORK_RANGES_2026:
-        start = date(today.year, m1, d1)
-        end = date(today.year, m2, d2)
-        if start <= today <= end:
+        if date(today.year, m1, d1) <= today <= date(today.year, m2, d2):
             return True
     return False
 
 
 def send_email(subject: str, body: str) -> None:
-    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ["SMTP_USER"]
     smtp_pass = os.environ["SMTP_PASS"]
     to_addr = os.environ.get("NOTIFY_EMAIL", smtp_user)
@@ -60,13 +49,13 @@ def send_email(subject: str, body: str) -> None:
     msg["From"] = smtp_user
     msg["To"] = to_addr
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(smtp_user, smtp_pass)
         server.sendmail(smtp_user, [to_addr], msg.as_string())
 
 
-def fill_and_submit() -> None:
+def fill_form(test_mode: bool = False) -> None:
     now_local = datetime.now(ZoneInfo(TIMEZONE))
     today_str = now_local.strftime("%m/%d/%Y")
 
@@ -84,16 +73,25 @@ def fill_and_submit() -> None:
                 "Возможно, структура формы изменилась."
             )
 
-        values = get_field_values() + [today_str]
-        for i, value in enumerate(values):
+        for i, value in enumerate(get_field_values(today_str)):
             field = text_inputs.nth(i)
             field.click()
             field.fill(value)
             field.dispatch_event("change")
 
-        page.wait_for_timeout(500)
-        submit_button = page.get_by_role("button", name="Submit")
-        submit_button.click()
+        page.wait_for_timeout(1000)
+
+        # TEST_MODE: заполняем форму, но НЕ нажимаем Submit.
+        if test_mode:
+            print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
+            print("Поля:")
+            for i, value in enumerate(get_field_values(today_str)):
+                print(f"  {i + 1}: {value}")
+            page.screenshot(path="test-mode.png", full_page=True)
+            browser.close()
+            return
+
+        page.get_by_role("button", name="Submit").click()
         page.wait_for_timeout(3000)
         browser.close()
 
@@ -101,6 +99,16 @@ def fill_and_submit() -> None:
 def main() -> int:
     now_local = datetime.now(ZoneInfo(TIMEZONE))
     today = now_local.date()
+    test_mode = os.environ.get("TEST_MODE", "false").lower() == "true"
+
+    if test_mode:
+        print(f"TEST_MODE включён. Локальное время: {now_local.isoformat()}")
+        try:
+            fill_form(test_mode=True)
+        except Exception as exc:
+            print(f"TEST_MODE ошибка: {exc}")
+            raise
+        return 0
 
     if now_local.hour != 7:
         print(f"Локальное время {now_local.isoformat()} — не 7 утра, выходим.")
@@ -111,7 +119,7 @@ def main() -> int:
         return 0
 
     try:
-        fill_and_submit()
+        fill_form(test_mode=False)
     except Exception as exc:
         send_email(
             subject="Smartsheet Autofill — ОШИБКА",
