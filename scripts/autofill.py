@@ -34,10 +34,10 @@ def get_field_values(today_str: str) -> list[str]:
 
 
 def is_work_day(today: date) -> bool:
-    for m1, d1, m2, d2 in WORK_RANGES_2026:
-        if date(today.year, m1, d1) <= today <= date(today.year, m2, d2):
-            return True
-    return False
+    return any(
+        date(today.year, m1, d1) <= today <= date(today.year, m2, d2)
+        for m1, d1, m2, d2 in WORK_RANGES_2026
+    )
 
 
 def send_email(subject: str, body: str) -> None:
@@ -56,52 +56,44 @@ def send_email(subject: str, body: str) -> None:
         server.sendmail(smtp_user, [to_addr], msg.as_string())
 
 
-def save_diagnostics(page) -> None:
-    """Save page/DOM diagnostics without exposing secret form values."""
-    Path("diagnostic.html").write_text(page.content(), encoding="utf-8")
+def collect_diagnostics(page, response_status=None) -> None:
+    """Save enough browser state to diagnose a blank/blocked Smartsheet page."""
+    out = Path("diagnostics")
+    out.mkdir(exist_ok=True)
 
     lines = [
-        f"PAGE_URL={page.url}",
-        f"TITLE={page.title()}",
-        f"FRAMES={len(page.frames)}",
-        "",
-        "FRAMES:",
+        f"URL: {page.url}",
+        f"TITLE: {page.title()}",
+        f"RESPONSE_STATUS: {response_status}",
+        f"FRAMES: {len(page.frames)}",
     ]
-    for index, frame in enumerate(page.frames):
-        lines.append(f"FRAME {index}: {frame.url}")
-        try:
-            lines.append(f"  title={frame.title()}")
-            for selector in ["input", "textarea", "button", "select", '[contenteditable="true"]']:
-                count = frame.locator(selector).count()
-                lines.append(f"  {selector}: {count}")
-        except Exception as exc:
-            lines.append(f"  diagnostic error: {exc}")
 
-    lines.extend(["", "VISIBLE ELEMENTS:"])
-    for selector in ["input", "textarea", "button", "select", '[contenteditable="true"]']:
-        locator = page.locator(selector)
+    for i, frame in enumerate(page.frames):
+        lines.append(f"FRAME_{i}_URL: {frame.url}")
         try:
-            count = locator.count()
-            lines.append(f"{selector}: {count}")
-            for i in range(min(count, 30)):
-                el = locator.nth(i)
-                try:
-                    if el.is_visible():
-                        lines.append(
-                            f"  {i}: visible tag={el.evaluate('(e) => e.tagName')} "
-                            f"type={el.get_attribute('type')} "
-                            f"name={el.get_attribute('name')} "
-                            f"placeholder={el.get_attribute('placeholder')} "
-                            f"aria={el.get_attribute('aria-label')} "
-                            f"text={el.inner_text()[:100]!r}"
-                        )
-                except Exception:
-                    pass
+            lines.append(f"FRAME_{i}_TITLE: {frame.title()}")
+            lines.append(f"FRAME_{i}_HTML_LENGTH: {len(frame.content())}")
+            lines.append(f"FRAME_{i}_INPUTS: {frame.locator('input').count()}")
+            lines.append(f"FRAME_{i}_BUTTONS: {frame.locator('button').count()}")
+            lines.append(f"FRAME_{i}_TEXTAREAS: {frame.locator('textarea').count()}")
+            lines.append(f"FRAME_{i}_SELECTS: {frame.locator('select').count()}")
+            lines.append(f"FRAME_{i}_BODY_TEXT: {frame.locator('body').inner_text(timeout=3000)[:3000]}")
         except Exception as exc:
-            lines.append(f"  error: {exc}")
+            lines.append(f"FRAME_{i}_ERROR: {exc}")
 
-    Path("diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
-    page.screenshot(path="test-mode.png", full_page=True)
+    try:
+        html = page.content()
+        (out / "page.html").write_text(html, encoding="utf-8")
+        lines.append(f"MAIN_HTML_LENGTH: {len(html)}")
+    except Exception as exc:
+        lines.append(f"MAIN_HTML_ERROR: {exc}")
+
+    try:
+        page.screenshot(path=str(out / "page.png"), full_page=True)
+    except Exception as exc:
+        lines.append(f"SCREENSHOT_ERROR: {exc}")
+
+    (out / "diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
 def find_form_fields(page):
@@ -131,26 +123,45 @@ def fill_form(test_mode: bool = False) -> None:
     now_local = datetime.now(ZoneInfo(TIMEZONE))
     today_str = now_local.strftime("%m/%d/%Y")
 
+    console_messages = []
+    page_errors = []
+    failed_requests = []
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # Smartsheet can render differently in a headless browser. TEST_MODE runs
+        # headed under Xvfb so we can verify the same page a normal browser sees.
+        browser = p.chromium.launch(headless=not test_mode)
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("requestfailed", lambda req: failed_requests.append(f"{req.url} :: {req.failure}"))
 
+        response_status = None
         try:
-            page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(8000)
+            response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
+            response_status = response.status if response else None
+            page.wait_for_timeout(10000)
 
-            print(f"URL после загрузки: {page.url}")
-            print(f"Title: {page.title()}")
-            print(f"Frames: {len(page.frames)}")
+            collect_diagnostics(page, response_status)
+            with open("diagnostics/diagnostic.txt", "a", encoding="utf-8") as f:
+                f.write("\nCONSOLE_MESSAGES:\n" + "\n".join(console_messages[-100:]))
+                f.write("\nPAGE_ERRORS:\n" + "\n".join(page_errors[-100:]))
+                f.write("\nFAILED_REQUESTS:\n" + "\n".join(failed_requests[-100:]))
 
             fields = find_form_fields(page)
             print(f"Найдено видимых редактируемых полей: {len(fields)}")
+            print(f"URL после загрузки: {page.url}")
+            print(f"Title: {page.title()}")
+            print(f"HTTP status: {response_status}")
+            print(f"Frames: {len(page.frames)}")
+            print(f"Console messages: {len(console_messages)}")
+            print(f"Page errors: {len(page_errors)}")
+            print(f"Failed requests: {len(failed_requests)}")
 
             if len(fields) < 6:
-                save_diagnostics(page)
                 raise RuntimeError(
                     f"Найдено только {len(fields)} видимых редактируемых полей, нужно минимум 6. "
-                    "Диагностика сохранена в diagnostic.html и diagnostic.txt."
+                    "Подробная диагностика сохранена в diagnostics/."
                 )
 
             values = get_field_values(today_str)
@@ -161,20 +172,24 @@ def fill_form(test_mode: bool = False) -> None:
                 field.fill(value)
                 field.dispatch_event("input")
                 field.dispatch_event("change")
-                print(f"Поле {i + 1} заполнено")
+                print(f"Поле {i + 1}: {value}")
 
             page.wait_for_timeout(1500)
 
             if test_mode:
                 print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
-                page.screenshot(path="test-mode.png", full_page=True)
+                page.screenshot(path="diagnostics/filled-form.png", full_page=True)
                 return
 
             page.get_by_role("button", name="Submit").click(timeout=15000)
             page.wait_for_timeout(3000)
         except Exception:
             try:
-                save_diagnostics(page)
+                collect_diagnostics(page, response_status)
+                with open("diagnostics/diagnostic.txt", "a", encoding="utf-8") as f:
+                    f.write("\nCONSOLE_MESSAGES:\n" + "\n".join(console_messages[-100:]))
+                    f.write("\nPAGE_ERRORS:\n" + "\n".join(page_errors[-100:]))
+                    f.write("\nFAILED_REQUESTS:\n" + "\n".join(failed_requests[-100:]))
             except Exception:
                 pass
             raise
