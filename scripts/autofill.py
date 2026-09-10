@@ -55,45 +55,86 @@ def send_email(subject: str, body: str) -> None:
         server.sendmail(smtp_user, [to_addr], msg.as_string())
 
 
+def find_form_fields(page):
+    """Find visible editable fields in the page and any iframes."""
+    candidates = []
+    selectors = [
+        'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"])',
+        "textarea",
+        '[contenteditable="true"]',
+    ]
+
+    for frame in page.frames:
+        for selector in selectors:
+            locator = frame.locator(selector)
+            for i in range(locator.count()):
+                field = locator.nth(i)
+                try:
+                    if field.is_visible() and field.is_enabled():
+                        candidates.append(field)
+                except Exception:
+                    pass
+
+    return candidates
+
+
 def fill_form(test_mode: bool = False) -> None:
     now_local = datetime.now(ZoneInfo(TIMEZONE))
     today_str = now_local.strftime("%m/%d/%Y")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(FORM_URL, wait_until="networkidle")
-        page.wait_for_timeout(4000)
+        page = browser.new_page(viewport={"width": 1440, "height": 1200})
 
-        text_inputs = page.locator('input[type="text"]')
-        count = text_inputs.count()
-        if count < 6:
-            raise RuntimeError(
-                f"Ожидалось минимум 6 текстовых полей, найдено {count}. "
-                "Возможно, структура формы изменилась."
-            )
+        try:
+            page.goto(FORM_URL, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(5000)
 
-        for i, value in enumerate(get_field_values(today_str)):
-            field = text_inputs.nth(i)
-            field.click()
-            field.fill(value)
-            field.dispatch_event("change")
+            fields = find_form_fields(page)
+            print(f"Найдено видимых редактируемых полей: {len(fields)}")
 
-        page.wait_for_timeout(1000)
+            if len(fields) < 6:
+                # Diagnostic information helps if Smartsheet changes its form markup.
+                print(f"Количество iframe: {len(page.frames)}")
+                for index, frame in enumerate(page.frames):
+                    try:
+                        print(f"  iframe/frame {index}: {frame.url}")
+                    except Exception:
+                        pass
+                page.screenshot(path="test-mode.png", full_page=True)
+                raise RuntimeError(
+                    f"Найдено только {len(fields)} видимых редактируемых полей, нужно минимум 6. "
+                    "Скриншот сохранён как test-mode.png."
+                )
 
-        # TEST_MODE: заполняем форму, но НЕ нажимаем Submit.
-        if test_mode:
-            print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
-            print("Поля:")
-            for i, value in enumerate(get_field_values(today_str)):
-                print(f"  {i + 1}: {value}")
-            page.screenshot(path="test-mode.png", full_page=True)
+            values = get_field_values(today_str)
+            for i, value in enumerate(values):
+                field = fields[i]
+                field.scroll_into_view_if_needed()
+                field.click()
+                field.fill(value)
+                field.dispatch_event("input")
+                field.dispatch_event("change")
+                print(f"Поле {i + 1}: {value}")
+
+            page.wait_for_timeout(1500)
+
+            # TEST_MODE: заполняем форму, но НЕ нажимаем Submit.
+            if test_mode:
+                print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
+                page.screenshot(path="test-mode.png", full_page=True)
+                return
+
+            page.get_by_role("button", name="Submit").click(timeout=15000)
+            page.wait_for_timeout(3000)
+        except Exception:
+            try:
+                page.screenshot(path="test-mode.png", full_page=True)
+            except Exception:
+                pass
+            raise
+        finally:
             browser.close()
-            return
-
-        page.get_by_role("button", name="Submit").click()
-        page.wait_for_timeout(3000)
-        browser.close()
 
 
 def main() -> int:
