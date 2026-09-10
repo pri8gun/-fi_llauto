@@ -76,35 +76,36 @@ def find_form_fields(page):
 
 
 def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
-    """Select an exact option from a Smartsheet Lodestar combobox."""
+    """Select an exact option from Smartsheet's Lodestar combobox."""
     label_locator = frame.locator("label").filter(has_text=label).first
     label_locator.wait_for(state="visible", timeout=10000)
     input_id = label_locator.get_attribute("for")
-    if not input_id: raise RuntimeError(f"Не найден атрибут for у label '{label}'.")
+    if not input_id:
+        raise RuntimeError(f"Не найден атрибут for у label '{label}'.")
+
     combo = frame.locator(f"#{input_id}")
-    combo.wait_for(state="visible", timeout=10000); combo.scroll_into_view_if_needed()
+    combo.wait_for(state="visible", timeout=10000)
+    combo.scroll_into_view_if_needed()
 
-    # Open the combobox and type the exact value. Do not use ArrowDown:
-    # it previously selected the wrong item (e.g. Nightshift instead of Dayshift).
-    combo.click(); combo.fill(value); frame.wait_for_timeout(700); combo.press("Enter"); frame.wait_for_timeout(700)
+    # Smartsheet renders the options as real role=option elements in a
+    # portal. Do not type into the combobox: that can leave its controlled
+    # input empty or move the active item. Open the menu and click the exact
+    # semantic option instead.
+    toggle = frame.locator(f"#{input_id}--toggle-button")
+    toggle.wait_for(state="visible", timeout=10000)
+    toggle.click()
+
+    option = frame.get_by_role("option", name=value, exact=True).last
+    option.wait_for(state="visible", timeout=10000)
+    option.click(force=True)
+    frame.wait_for_timeout(500)
+
     actual = combo.input_value().strip()
-
     if actual != value:
-        # Lodestar may render the menu in a portal. Click the visible exact
-        # option with force=True because the combobox input can overlap it.
-        exact = frame.get_by_text(value, exact=True)
-        visible = []
-        for i in range(exact.count()):
-            try:
-                if exact.nth(i).is_visible(): visible.append(exact.nth(i))
-            except Exception: pass
-        if visible:
-            visible[-1].click(force=True)
-            frame.wait_for_timeout(700)
-        actual = combo.input_value().strip()
-
-    if actual != value:
-        raise RuntimeError(f"Не удалось выбрать '{value}' в поле '{label}'. Текущее значение: '{actual}'.")
+        raise RuntimeError(
+            f"Не удалось выбрать '{value}' в поле '{label}'. "
+            f"Текущее значение: '{actual}'."
+        )
     print(f"Dropdown '{label}': {value}")
 
 
