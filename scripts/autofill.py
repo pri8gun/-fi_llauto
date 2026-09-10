@@ -90,28 +90,8 @@ def collect_diagnostics(page, response_status=None) -> None:
     (out / "diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
-def find_form_fields(page):
-    """Find the visible text inputs in the form, including custom combobox inputs."""
-    fields = []
-    for frame in page.frames:
-        locator = frame.locator('input[type="text"]')
-        for i in range(locator.count()):
-            field = locator.nth(i)
-            try:
-                if field.is_visible() and field.is_enabled():
-                    fields.append(field)
-            except Exception:
-                pass
-    return fields
-
-
 def fill_like_working_bookmarklet(page, values: list[str]) -> None:
-    """Reproduce the user's proven browser-bookmarklet technique exactly.
-
-    The bookmarklet does not click Smartsheet dropdown options. It uses the
-    native HTMLInputElement value setter, dispatches input/change, then sends
-    Enter. This is the interaction sequence known to work in the real browser.
-    """
+    """Reproduce the user's proven browser-bookmarklet technique exactly."""
     result = page.evaluate(
         """
         ({values}) => {
@@ -132,8 +112,12 @@ def fill_like_working_bookmarklet(page, values: list[str]) -> None:
                 setter.call(el, values[i]);
                 el.dispatchEvent(new Event('input', {bubbles: true}));
                 el.dispatchEvent(new Event('change', {bubbles: true}));
-                el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
-                el.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', bubbles: true}));
+                el.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+                }));
+                el.dispatchEvent(new KeyboardEvent('keyup', {
+                    key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+                }));
                 el.blur();
                 results.push({index: i, value: el.value, name: el.name || '', ok: true});
             });
@@ -145,27 +129,34 @@ def fill_like_working_bookmarklet(page, values: list[str]) -> None:
     print(f"Bookmarklet-style results: {result}")
     page.wait_for_timeout(1500)
 
-    actual = page.locator('input[type="text"]')
-    current = []
-    for i in range(min(6, actual.count())):
-        current.append(actual.nth(i).input_value())
-    print(f"Первые 6 text inputs после заполнения: {current}")
 
-    # The sixth visible text input is the Date field. The seventh is a hidden
-    # anti-spam/system field, so the first six are the actual form fields.
-    for i, expected in enumerate(values):
-        if i >= actual.count():
-            raise RuntimeError(f"Не найден text input #{i + 1}.")
-        got = actual.nth(i).input_value().strip()
-        if got != expected:
-            raise RuntimeError(
-                f"Поле #{i + 1} не приняло значение. Ожидалось '{expected}', получено '{got}'."
-            )
+def read_form_state(page) -> dict:
+    """Read the actual rendered state of all six fields.
+
+    Important: Smartsheet Lodestar SELECT_INPUTs keep their selected value in
+    React state and render it in a span inside role=combobox. Their underlying
+    text input's value can legitimately remain empty, so it must NOT be used
+    to verify Dayshift/Craft.
+    """
+    inputs = page.locator('input[type="text"]')
+    text_values = [inputs.nth(i).input_value().strip() for i in (0, 3, 4, 5)]
+    combo_values = [
+        text.strip() for text in page.locator('[role="combobox"]').all_inner_texts()
+    ]
+    return {
+        "name": text_values[0],
+        "dayshift": combo_values[0] if len(combo_values) > 0 else "",
+        "craft": combo_values[1] if len(combo_values) > 1 else "",
+        "discipline": text_values[1],
+        "time": text_values[2],
+        "date": text_values[3],
+    }
 
 
 def fill_form(test_mode: bool = False) -> None:
     now_local = datetime.now(ZoneInfo(TIMEZONE))
     today_str = now_local.strftime("%m/%d/%Y")
+    values = get_field_values(today_str)
     console_messages, page_errors, failed_requests = [], [], []
 
     with sync_playwright() as p:
@@ -181,18 +172,32 @@ def fill_form(test_mode: bool = False) -> None:
             page.wait_for_timeout(10000)
             collect_diagnostics(page, response_status)
 
-            fields = find_form_fields(page)
-            print(f"Найдено видимых text input полей: {len(fields)}")
-            if len(fields) < 6:
+            inputs = page.locator('input[type="text"]')
+            count = inputs.count()
+            print(f"input[type=text] count: {count}")
+            if count < 6:
+                raise RuntimeError(f"Найдено {count} input[type=text], нужно минимум 6.")
+
+            fill_like_working_bookmarklet(page, values)
+            state = read_form_state(page)
+            print(f"Состояние формы после bookmarklet-метода: {state}")
+
+            expected = {
+                "name": values[0],
+                "dayshift": values[1],
+                "craft": values[2],
+                "discipline": values[3],
+                "time": values[4],
+                "date": values[5],
+            }
+            if state != expected:
                 raise RuntimeError(
-                    f"Найдено только {len(fields)} видимых text input полей, нужно минимум 6."
+                    "Форма визуально/DOM-состоянием не совпала с ожидаемыми значениями. "
+                    f"Ожидалось: {expected}; получено: {state}"
                 )
 
-            values = get_field_values(today_str)
-            fill_like_working_bookmarklet(page, values)
-
             if test_mode:
-                print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
+                print("TEST_MODE=true: все 6 полей заполнены, Submit НЕ нажат.")
                 page.screenshot(path="diagnostics/filled-form.png", full_page=True)
                 return
 
@@ -202,6 +207,11 @@ def fill_form(test_mode: bool = False) -> None:
             try:
                 collect_diagnostics(page, response_status)
                 with open("diagnostics/diagnostic.txt", "a", encoding="utf-8") as f:
+                    f.write("\nEXPECTED_VALUES:\n" + repr(values))
+                    try:
+                        f.write("\nFORM_STATE:\n" + repr(read_form_state(page)))
+                    except Exception as state_exc:
+                        f.write("\nFORM_STATE_ERROR:\n" + repr(state_exc))
                     f.write("\nCONSOLE_MESSAGES:\n" + "\n".join(console_messages[-100:]))
                     f.write("\nPAGE_ERRORS:\n" + "\n".join(page_errors[-100:]))
                     f.write("\nFAILED_REQUESTS:\n" + "\n".join(failed_requests[-100:]))
