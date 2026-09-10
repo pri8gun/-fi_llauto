@@ -97,7 +97,7 @@ def collect_diagnostics(page, response_status=None) -> None:
 
 
 def find_form_fields(page):
-    """Find visible editable text/date fields; custom dropdowns are handled by label below."""
+    """Find visible editable text/date fields; custom dropdowns are handled separately."""
     candidates = []
     selectors = [
         'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"])',
@@ -120,21 +120,44 @@ def find_form_fields(page):
 
 
 def select_smartsheet_dropdown(frame, label: str, value: str) -> None:
-    """Select a value from Smartsheet's custom role=combobox control by its label."""
-    combo_input = frame.get_by_label(label, exact=True)
+    """Select a value from Smartsheet's custom Lodestar combobox."""
+    # Smartsheet renders a real <label for="...">, but get_by_label() does not
+    # reliably resolve this custom combobox in the GitHub Actions browser.
+    label_locator = frame.locator("label").filter(has_text=label).first
+    label_locator.wait_for(state="visible", timeout=10000)
+
+    input_id = label_locator.get_attribute("for")
+    if not input_id:
+        raise RuntimeError(f"Не найден атрибут for у label '{label}'.")
+
+    combo_input = frame.locator(f"#{input_id}")
     combo_input.wait_for(state="visible", timeout=10000)
-    combo_input.click()
+    combo_input.scroll_into_view_if_needed()
 
-    # Smartsheet renders the menu as a listbox/option set after the combobox opens.
-    option = frame.get_by_role("option", name=value, exact=True)
-    option.wait_for(state="visible", timeout=10000)
-    option.click()
+    toggle = frame.locator(f"#{input_id}--toggle-button")
+    toggle.click()
 
-    # Confirm that the custom combobox now contains the selected value.
-    if combo_input.input_value() != value:
+    listbox_id = combo_input.get_attribute("aria-controls")
+    if not listbox_id:
+        raise RuntimeError(f"У dropdown '{label}' отсутствует aria-controls.")
+
+    listbox = frame.locator(f"#{listbox_id}")
+    listbox.wait_for(state="visible", timeout=10000)
+
+    # Prefer the semantic option role. If Smartsheet changes the role markup,
+    # fall back to an exact visible text match inside the opened listbox.
+    option = listbox.get_by_role("option", name=value, exact=True)
+    if option.count() == 0:
+        option = listbox.get_by_text(value, exact=True)
+
+    option.first.wait_for(state="visible", timeout=10000)
+    option.first.click()
+
+    frame.wait_for_timeout(300)
+    actual = combo_input.input_value()
+    if actual != value:
         raise RuntimeError(
-            f"Не удалось выбрать '{value}' в поле '{label}'. "
-            f"Текущее значение: '{combo_input.input_value()}'."
+            f"Не удалось выбрать '{value}' в поле '{label}'. Текущее значение: '{actual}'."
         )
 
     print(f"Dropdown '{label}': {value}")
@@ -149,8 +172,6 @@ def fill_form(test_mode: bool = False) -> None:
     failed_requests = []
 
     with sync_playwright() as p:
-        # Smartsheet can render differently in a headless browser. TEST_MODE runs
-        # headed under Xvfb so we can verify the same page a normal browser sees.
         browser = p.chromium.launch(headless=not test_mode)
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
         page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
@@ -187,7 +208,7 @@ def fill_form(test_mode: bool = False) -> None:
 
             values = get_field_values(today_str)
 
-            # The first field is a normal text input.
+            # 1. Name — ordinary text input.
             fields[0].scroll_into_view_if_needed()
             fields[0].click()
             fields[0].fill(values[0])
@@ -195,13 +216,12 @@ def fill_form(test_mode: bool = False) -> None:
             fields[0].dispatch_event("change")
             print(f"Поле 1: {values[0]}")
 
-            # These two are Smartsheet custom comboboxes, not ordinary text fields.
-            # Filling their input with text does not select an actual option.
+            # 2-3. Custom Smartsheet dropdowns.
             form_frame = page.main_frame
             select_smartsheet_dropdown(form_frame, "Dayshift/Nightshift", values[1])
             select_smartsheet_dropdown(form_frame, "Staff/Craft/Visitor/Sub", values[2])
 
-            # Remaining fields: Discipline, Time In, Date.
+            # 4-6. Discipline, Time In, Date.
             for index, value in ((3, values[3]), (4, values[4]), (5, values[5])):
                 field = fields[index]
                 field.scroll_into_view_if_needed()
