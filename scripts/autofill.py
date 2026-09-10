@@ -5,6 +5,7 @@ import smtplib
 import sys
 from datetime import date, datetime
 from email.mime.text import MIMEText
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
@@ -55,6 +56,54 @@ def send_email(subject: str, body: str) -> None:
         server.sendmail(smtp_user, [to_addr], msg.as_string())
 
 
+def save_diagnostics(page) -> None:
+    """Save page/DOM diagnostics without exposing secret form values."""
+    Path("diagnostic.html").write_text(page.content(), encoding="utf-8")
+
+    lines = [
+        f"PAGE_URL={page.url}",
+        f"TITLE={page.title()}",
+        f"FRAMES={len(page.frames)}",
+        "",
+        "FRAMES:",
+    ]
+    for index, frame in enumerate(page.frames):
+        lines.append(f"FRAME {index}: {frame.url}")
+        try:
+            lines.append(f"  title={frame.title()}")
+            for selector in ["input", "textarea", "button", "select", '[contenteditable="true"]']:
+                count = frame.locator(selector).count()
+                lines.append(f"  {selector}: {count}")
+        except Exception as exc:
+            lines.append(f"  diagnostic error: {exc}")
+
+    lines.extend(["", "VISIBLE ELEMENTS:"])
+    for selector in ["input", "textarea", "button", "select", '[contenteditable="true"]']:
+        locator = page.locator(selector)
+        try:
+            count = locator.count()
+            lines.append(f"{selector}: {count}")
+            for i in range(min(count, 30)):
+                el = locator.nth(i)
+                try:
+                    if el.is_visible():
+                        lines.append(
+                            f"  {i}: visible tag={el.evaluate('(e) => e.tagName')} "
+                            f"type={el.get_attribute('type')} "
+                            f"name={el.get_attribute('name')} "
+                            f"placeholder={el.get_attribute('placeholder')} "
+                            f"aria={el.get_attribute('aria-label')} "
+                            f"text={el.inner_text()[:100]!r}"
+                        )
+                except Exception:
+                    pass
+        except Exception as exc:
+            lines.append(f"  error: {exc}")
+
+    Path("diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
+    page.screenshot(path="test-mode.png", full_page=True)
+
+
 def find_form_fields(page):
     """Find visible editable fields in the page and any iframes."""
     candidates = []
@@ -87,24 +136,21 @@ def fill_form(test_mode: bool = False) -> None:
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
 
         try:
-            page.goto(FORM_URL, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(5000)
+            page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(8000)
+
+            print(f"URL после загрузки: {page.url}")
+            print(f"Title: {page.title()}")
+            print(f"Frames: {len(page.frames)}")
 
             fields = find_form_fields(page)
             print(f"Найдено видимых редактируемых полей: {len(fields)}")
 
             if len(fields) < 6:
-                # Diagnostic information helps if Smartsheet changes its form markup.
-                print(f"Количество iframe: {len(page.frames)}")
-                for index, frame in enumerate(page.frames):
-                    try:
-                        print(f"  iframe/frame {index}: {frame.url}")
-                    except Exception:
-                        pass
-                page.screenshot(path="test-mode.png", full_page=True)
+                save_diagnostics(page)
                 raise RuntimeError(
                     f"Найдено только {len(fields)} видимых редактируемых полей, нужно минимум 6. "
-                    "Скриншот сохранён как test-mode.png."
+                    "Диагностика сохранена в diagnostic.html и diagnostic.txt."
                 )
 
             values = get_field_values(today_str)
@@ -115,11 +161,10 @@ def fill_form(test_mode: bool = False) -> None:
                 field.fill(value)
                 field.dispatch_event("input")
                 field.dispatch_event("change")
-                print(f"Поле {i + 1}: {value}")
+                print(f"Поле {i + 1} заполнено")
 
             page.wait_for_timeout(1500)
 
-            # TEST_MODE: заполняем форму, но НЕ нажимаем Submit.
             if test_mode:
                 print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
                 page.screenshot(path="test-mode.png", full_page=True)
@@ -129,7 +174,7 @@ def fill_form(test_mode: bool = False) -> None:
             page.wait_for_timeout(3000)
         except Exception:
             try:
-                page.screenshot(path="test-mode.png", full_page=True)
+                save_diagnostics(page)
             except Exception:
                 pass
             raise
@@ -144,11 +189,7 @@ def main() -> int:
 
     if test_mode:
         print(f"TEST_MODE включён. Локальное время: {now_local.isoformat()}")
-        try:
-            fill_form(test_mode=True)
-        except Exception as exc:
-            print(f"TEST_MODE ошибка: {exc}")
-            raise
+        fill_form(test_mode=True)
         return 0
 
     if now_local.hour != 7:
