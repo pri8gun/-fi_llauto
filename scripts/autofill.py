@@ -155,7 +155,7 @@ def expected_cron_for_vancouver(now: datetime) -> str:
 
 
 def scheduled_run_is_allowed(now: datetime) -> bool:
-    """Accept only the correct DST/PST cron and tolerate a modest GitHub delay."""
+    """Accept only the correct DST/PST cron and tolerate a delayed GitHub start."""
     scheduled_cron = os.environ.get("SCHEDULED_CRON", "").strip()
     expected_cron = expected_cron_for_vancouver(now)
 
@@ -168,14 +168,13 @@ def scheduled_run_is_allowed(now: datetime) -> bool:
         )
         return False
 
-    # Normal start is 07:30. GitHub Actions can start scheduled jobs late, so
-    # allow a 45-minute grace period through 08:15. The cron guard above keeps
-    # the second UTC schedule from causing a duplicate submission.
+    # Normal start is 07:30. GitHub Actions can start scheduled jobs late,
+    # so accept the intended 07:30 run through 16:00 Vancouver.
     minutes = now.hour * 60 + now.minute
-    if not (7 * 60 <= minutes <= 8 * 60 + 15):
+    if not (7 * 60 + 30 <= minutes <= 16 * 60):
         print(
             f"Локальное время {now.isoformat()} вне допустимого окна "
-            "07:00–08:15 Vancouver. Выходим без отправки."
+            "07:30–16:00 Vancouver. Выходим без отправки."
         )
         return False
 
@@ -291,10 +290,10 @@ def main() -> int:
     else:
         # Safety for any non-test manual invocation: keep the same time window.
         minutes = now.hour * 60 + now.minute
-        if not (7 * 60 <= minutes <= 8 * 60 + 15):
+        if not (7 * 60 + 30 <= minutes <= 16 * 60):
             print(
                 f"Ручной production-запуск в {now.isoformat()} вне окна "
-                "07:00–08:15 Vancouver — выходим."
+                "07:30–16:00 Vancouver — выходим."
             )
             return 0
 
