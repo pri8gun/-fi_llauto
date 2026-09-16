@@ -12,16 +12,7 @@ from playwright.sync_api import sync_playwright
 
 FORM_URL = "https://app.smartsheet.com/b/form/2bc79c969d504a948791cb84fcf751e7"
 TIMEZONE = "America/Vancouver"
-FORM_LOAD_ATTEMPTS = 3
-FORM_LOAD_RETRY_MS = 15000
-
-WORK_RANGES_2026 = [
-    (9, 16, 9, 29),
-    (10, 7, 10, 20),
-    (10, 28, 11, 10),
-    (11, 18, 12, 1),
-    (12, 9, 12, 22),
-]
+WORK_RANGES_2026 = [(9, 16, 9, 29), (10, 7, 10, 20), (10, 28, 11, 10), (11, 18, 12, 1), (12, 9, 12, 22)]
 
 
 def get_field_values(date_str: str) -> list[str]:
@@ -29,63 +20,30 @@ def get_field_values(date_str: str) -> list[str]:
 
 
 def is_work_day(today: date) -> bool:
-    return any(date(today.year, m1, d1) <= today <= date(today.year, m2, d2) for m1, d1, m2, d2 in WORK_RANGES_2026)
+    return any(date(today.year, a, b) <= today <= date(today.year, c, d) for a, b, c, d in WORK_RANGES_2026)
 
 
 def send_email(subject: str, body: str) -> None:
-    user = os.environ["SMTP_USER"]
-    password = os.environ["SMTP_PASS"]
+    user, password = os.environ["SMTP_USER"], os.environ["SMTP_PASS"]
     to_addr = os.environ.get("NOTIFY_EMAIL", user)
     msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = user
-    msg["To"] = to_addr
+    msg["Subject"], msg["From"], msg["To"] = subject, user, to_addr
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(user, password)
-        server.sendmail(user, [to_addr], msg.as_string())
+        server.starttls(); server.login(user, password); server.sendmail(user, [to_addr], msg.as_string())
 
 
 def diagnostics(page, status=None) -> None:
-    out = Path("diagnostics")
-    out.mkdir(exist_ok=True)
+    out = Path("diagnostics"); out.mkdir(exist_ok=True)
     lines = [f"URL: {page.url}", f"TITLE: {page.title()}", f"RESPONSE_STATUS: {status}", f"FRAMES: {len(page.frames)}"]
     for i, frame in enumerate(page.frames):
         try:
-            lines.extend([f"FRAME_{i}_URL: {frame.url}", f"FRAME_{i}_INPUTS: {frame.locator('input').count()}", f"FRAME_{i}_BUTTONS: {frame.locator('button').count()}", f"FRAME_{i}_BODY_TEXT: {frame.locator('body').inner_text(timeout=3000)[:4000]}"])
-        except Exception as exc:
-            lines.append(f"FRAME_{i}_ERROR: {exc}")
-    try:
-        (out / "page.html").write_text(page.content(), encoding="utf-8")
-    except Exception:
-        pass
-    try:
-        page.screenshot(path=str(out / "page.png"), full_page=True)
-    except Exception:
-        pass
+            lines += [f"FRAME_{i}_URL: {frame.url}", f"FRAME_{i}_INPUTS: {frame.locator('input').count()}", f"FRAME_{i}_BUTTONS: {frame.locator('button').count()}", f"FRAME_{i}_BODY_TEXT: {frame.locator('body').inner_text(timeout=3000)[:4000]}"]
+        except Exception as exc: lines.append(f"FRAME_{i}_ERROR: {exc}")
+    try: (out / "page.html").write_text(page.content(), encoding="utf-8")
+    except Exception: pass
+    try: page.screenshot(path=str(out / "page.png"), full_page=True)
+    except Exception: pass
     (out / "diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
-
-
-def load_form_with_retries(page) -> int | None:
-    last_status = None
-    for attempt in range(1, FORM_LOAD_ATTEMPTS + 1):
-        print(f"Загрузка Smartsheet: попытка {attempt}/{FORM_LOAD_ATTEMPTS}.")
-        response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
-        last_status = response.status if response else None
-        try:
-            page.locator('input[type="text"]').nth(5).wait_for(state="attached", timeout=20000)
-        except Exception:
-            pass
-        count = page.locator('input[type="text"]').count()
-        print(f"После попытки {attempt}: HTTP={last_status}, text inputs={count}.")
-        if count >= 6:
-            return last_status
-        diagnostics(page, last_status)
-        if attempt < FORM_LOAD_ATTEMPTS:
-            print("Форма загрузилась не полностью; ждём 15 секунд и повторяем загрузку.")
-            page.wait_for_timeout(FORM_LOAD_RETRY_MS)
-    count = page.locator('input[type="text"]').count()
-    raise RuntimeError(f"Smartsheet не загрузил форму после {FORM_LOAD_ATTEMPTS} попыток; найдено {count} input[type=text].")
 
 
 def fill_like_bookmarklet(page, values: list[str]) -> None:
@@ -94,25 +52,34 @@ def fill_like_bookmarklet(page, values: list[str]) -> None:
             const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
             const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
             return Object.keys(values).map(key => {
-                const i = Number(key); const el = inputs[i];
-                if (!el) return {index: i, ok: false, reason: 'missing input'};
-                el.focus(); setter.call(el, values[i]);
-                el.dispatchEvent(new Event('input', {bubbles: true}));
-                el.dispatchEvent(new Event('change', {bubbles: true}));
-                el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
-                el.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
-                el.blur(); return {index:i,value:el.value,ok:true};
+                const i = Number(key), el = inputs[i];
+                if (!el) return {index:i, ok:false, reason:'missing input'};
+                el.focus();
+                setter.call(el, values[i]);
+                el.dispatchEvent(new Event('input', {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+                el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));
+                el.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));
+                el.blur();
+                return {index:i, value:el.value, ok:true};
             });
         }
-    """, {"values": {str(i): value for i, value in enumerate(values)}})
+    """, {"values": {str(i): v for i, v in enumerate(values)}})
     print(f"Bookmarklet-style results: {result}")
     page.wait_for_timeout(1500)
 
 
 def read_form_state(page) -> dict:
     inputs = page.locator('input[type="text"]')
-    combos = [text.strip() for text in page.locator('[role="combobox"]').all_inner_texts()]
-    return {"name": inputs.nth(0).input_value().strip(), "dayshift": combos[0] if len(combos)>0 else "", "craft": combos[1] if len(combos)>1 else "", "discipline": inputs.nth(3).input_value().strip(), "time": inputs.nth(4).input_value().strip(), "date": inputs.nth(5).input_value().strip()}
+    combos = [x.strip() for x in page.locator('[role="combobox"]').all_inner_texts()]
+    return {
+        "name": inputs.nth(0).input_value().strip(),
+        "dayshift": combos[0] if len(combos) > 0 else "",
+        "craft": combos[1] if len(combos) > 1 else "",
+        "discipline": inputs.nth(3).input_value().strip(),
+        "time": inputs.nth(4).input_value().strip(),
+        "date": inputs.nth(5).input_value().strip(),
+    }
 
 
 def run_is_in_allowed_window(now: datetime) -> bool:
@@ -123,7 +90,7 @@ def run_is_in_allowed_window(now: datetime) -> bool:
     return True
 
 
-def run_form(test_mode: bool = False) -> None:
+def run_form(test_mode=False) -> None:
     now = datetime.now(ZoneInfo(TIMEZONE))
     date_str = now.strftime("%m/%d/%Y")
     values = get_field_values(date_str)
@@ -131,50 +98,56 @@ def run_form(test_mode: bool = False) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not test_mode)
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
-        page.on("pageerror", lambda exc: errors.append(str(exc)))
-        page.on("requestfailed", lambda req: failed.append(f"{req.url} :: {req.failure}"))
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("requestfailed", lambda r: failed.append(f"{r.url} :: {r.failure}"))
         status = None
         try:
-            status = load_form_with_retries(page)
+            response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
+            status = response.status if response else None
+            page.wait_for_timeout(10000)
             diagnostics(page, status)
+            inputs = page.locator('input[type="text"]')
+            if inputs.count() < 6: raise RuntimeError(f"Найдено только {inputs.count()} input[type=text].")
+
             fill_like_bookmarklet(page, values)
             state = read_form_state(page)
-            expected = {"name": values[0], "dayshift": values[1], "craft": values[2], "discipline": values[3], "time": values[4], "date": values[5]}
+            expected = {"name":values[0], "dayshift":values[1], "craft":values[2], "discipline":values[3], "time":values[4], "date":values[5]}
             print(f"Состояние формы: {state}")
-            if state != expected:
-                raise RuntimeError(f"Ожидалось {expected}, получено {state}")
+            if state != expected: raise RuntimeError(f"Ожидалось {expected}, получено {state}")
+
             submit_button = page.get_by_role("button", name="Submit")
             submit_button.wait_for(state="visible", timeout=15000)
             print(f"Submit visible={submit_button.is_visible()}, enabled={submit_button.is_enabled()}")
+
             if test_mode:
                 print("TEST_MODE=true: форма заполнена, Submit НЕ нажат.")
                 page.screenshot(path="diagnostics/filled-form.png", full_page=True)
                 return
+
             if not submit_button.is_enabled():
                 raise RuntimeError("Submit остаётся disabled после заполнения всех полей.")
-            print(f"Отправляю форму. Дата: {date_str}")
+
+            print(f"НАЖИМАЮ РЕАЛЬНЫЙ SUBMIT. Дата формы: {date_str}")
             submit_button.click(timeout=15000)
-            page.wait_for_url("**?confirm=true", timeout=20000)
-            page.get_by_text("Success!", exact=True).wait_for(state="visible", timeout=10000)
-            page.get_by_text("We've captured your response.", exact=True).wait_for(state="visible", timeout=10000)
+            page.wait_for_timeout(5000)
             diagnostics(page, status)
-            body = page.locator("body").inner_text(timeout=5000)
-            (Path("diagnostics") / "submit-result.txt").write_text(body, encoding="utf-8")
             page.screenshot(path="diagnostics/submitted-form.png", full_page=True)
-            print(f"Smartsheet подтвердил отправку. URL: {page.url}")
+            body = page.locator("body").inner_text(timeout=5000)
+            print(f"После Submit URL: {page.url}")
+            print("Текст после Submit:\n" + body[:5000])
+            (Path("diagnostics") / "submit-result.txt").write_text(body, encoding="utf-8")
+            if "?confirm=true" not in page.url or "Success!" not in body or "We've captured your response." not in body:
+                raise RuntimeError("Smartsheet не подтвердил успешную отправку формы.")
         except Exception:
             try:
                 diagnostics(page, status)
                 with open("diagnostics/diagnostic.txt", "a", encoding="utf-8") as f:
                     f.write("\nEXPECTED_VALUES:\n" + repr(values))
-                    try:
-                        f.write("\nFORM_STATE:\n" + repr(read_form_state(page)))
-                    except Exception as state_exc:
-                        f.write("\nFORM_STATE_ERROR:\n" + repr(state_exc))
+                    try: f.write("\nFORM_STATE:\n" + repr(read_form_state(page)))
+                    except Exception as state_exc: f.write("\nFORM_STATE_ERROR:\n" + repr(state_exc))
                     f.write("\nPAGE_ERRORS:\n" + repr(errors[-100:]))
                     f.write("\nFAILED_REQUESTS:\n" + repr(failed[-100:]))
-            except Exception:
-                pass
+            except Exception: pass
             raise
         finally:
             browser.close()
@@ -184,6 +157,7 @@ def main() -> int:
     now = datetime.now(ZoneInfo(TIMEZONE))
     today = now.date()
     test_mode = os.environ.get("TEST_MODE", "false").lower() == "true"
+
     if test_mode:
         print(f"TEST_MODE=true, Vancouver time: {now.isoformat()}")
         run_form(test_mode=True)
@@ -193,6 +167,7 @@ def main() -> int:
         return 0
     if not run_is_in_allowed_window(now):
         return 0
+
     try:
         run_form(test_mode=False)
     except Exception as exc:
@@ -202,8 +177,6 @@ def main() -> int:
             print(f"Не удалось отправить email об ошибке: {email_exc}")
         raise
 
-    # Marker is created immediately after Smartsheet has confirmed the submission.
-    # Notification failures must never turn a confirmed submission into a retryable failure.
     Path("sent-marker.txt").write_text(str(today), encoding="utf-8")
     try:
         send_email("Smartsheet Autofill — форма отправлена", f"Форма Woodfibre Daily Head Count успешно отправлена за {today}.")
@@ -213,5 +186,4 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__": sys.exit(main())
