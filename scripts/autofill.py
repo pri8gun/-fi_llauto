@@ -12,6 +12,8 @@ from playwright.sync_api import sync_playwright
 
 FORM_URL = "https://app.smartsheet.com/b/form/2bc79c969d504a948791cb84fcf751e7"
 TIMEZONE = "America/Vancouver"
+FORM_LOAD_ATTEMPTS = 3
+FORM_LOAD_RETRY_MS = 15000
 
 WORK_RANGES_2026 = [
     (9, 16, 9, 29),
@@ -86,6 +88,41 @@ def diagnostics(page, status=None) -> None:
         pass
 
     (out / "diagnostic.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+def load_form_with_retries(page) -> int | None:
+    """Load the Smartsheet form, retrying transient incomplete page loads."""
+    last_status = None
+    for attempt in range(1, FORM_LOAD_ATTEMPTS + 1):
+        print(f"Загрузка Smartsheet: попытка {attempt}/{FORM_LOAD_ATTEMPTS}.")
+        response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
+        last_status = response.status if response else None
+
+        try:
+            page.locator('input[type="text"]').nth(5).wait_for(
+                state="attached", timeout=20000
+            )
+        except Exception:
+            pass
+
+        count = page.locator('input[type="text"]').count()
+        print(f"После попытки {attempt}: HTTP={last_status}, text inputs={count}.")
+        if count >= 6:
+            return last_status
+
+        diagnostics(page, last_status)
+        if attempt < FORM_LOAD_ATTEMPTS:
+            print(
+                "Форма загрузилась не полностью; ждём 15 секунд и повторяем "
+                "загрузку в новой попытке."
+            )
+            page.wait_for_timeout(FORM_LOAD_RETRY_MS)
+
+    count = page.locator('input[type="text"]').count()
+    raise RuntimeError(
+        f"Smartsheet не загрузил форму после {FORM_LOAD_ATTEMPTS} попыток; "
+        f"найдено {count} input[type=text]."
+    )
 
 
 def fill_like_bookmarklet(page, values: list[str]) -> None:
@@ -163,14 +200,8 @@ def run_form(test_mode: bool = False) -> None:
         status = None
 
         try:
-            response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
-            status = response.status if response else None
-            page.wait_for_timeout(10000)
+            status = load_form_with_retries(page)
             diagnostics(page, status)
-
-            inputs = page.locator('input[type="text"]')
-            if inputs.count() < 6:
-                raise RuntimeError(f"Найдено только {inputs.count()} input[type=text].")
 
             fill_like_bookmarklet(page, values)
             state = read_form_state(page)
