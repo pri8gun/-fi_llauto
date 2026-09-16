@@ -2,8 +2,10 @@ name: Smartsheet Autofill
 
 on:
   schedule:
-    - cron: '30 14 * * *'
-    - cron: '30 15 * * *'
+    # Hourly candidates covering 07:30–16:00 Vancouver in both PDT and PST.
+    # The Python time-window check ignores candidates outside the local window.
+    - cron: '30 14-23 * * *'
+    - cron: '30 0 * * *'
   workflow_dispatch:
     inputs:
       test_mode:
@@ -12,33 +14,69 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: smartsheet-autofill
+  cancel-in-progress: false
+
 jobs:
   autofill:
     runs-on: ubuntu-latest
     steps:
+      - name: Check whether today was already sent
+        id: already_sent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TODAY=$(TZ=America/Vancouver date +%F)
+          ARTIFACT_NAME="smartsheet-sent-${TODAY}"
+          COUNT=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ARTIFACT_NAME}" --jq '.total_count')
+          echo "today=${TODAY}" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Форма за ${TODAY} уже была успешно отправлена. Повторный Submit заблокирован."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out repository
+        if: steps.already_sent.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
         uses: actions/checkout@v6
 
       - name: Set up Python
+        if: steps.already_sent.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install dependencies
+        if: steps.already_sent.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
       - name: Run autofill
+        if: steps.already_sent.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
         env:
           WORKER_NAME: ${{ secrets.WORKER_NAME }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
-          SCHEDULED_CRON: ${{ github.event.schedule }}
         run: xvfb-run -a python scripts/autofill.py
+
+      - name: Record successful submission
+        if: success() && steps.already_sent.outputs.skip != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
+        uses: actions/upload-artifact@v6
+        with:
+          name: smartsheet-sent-${{ steps.already_sent.outputs.today }}
+          path: sent-marker.txt
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload diagnostics
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.test_mode == true) || failure() }}
