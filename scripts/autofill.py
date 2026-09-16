@@ -13,10 +13,6 @@ from playwright.sync_api import sync_playwright
 FORM_URL = "https://app.smartsheet.com/b/form/2bc79c969d504a948791cb84fcf751e7"
 TIMEZONE = "America/Vancouver"
 
-# Two UTC schedules are needed because Vancouver switches between PDT and PST.
-PDT_CRON = "30 14 * * *"  # 07:30 Vancouver while UTC-7
-PST_CRON = "30 15 * * *"  # 07:30 Vancouver while UTC-8
-
 WORK_RANGES_2026 = [
     (9, 16, 9, 29),
     (10, 7, 10, 20),
@@ -141,35 +137,8 @@ def read_form_state(page) -> dict:
     }
 
 
-def expected_cron_for_vancouver(now: datetime) -> str:
-    """Return the UTC cron that corresponds to 07:30 in Vancouver today."""
-    offset = now.utcoffset()
-    if offset is None:
-        raise RuntimeError("Не удалось определить UTC offset для Vancouver.")
-    offset_hours = int(offset.total_seconds() // 3600)
-    if offset_hours == -7:
-        return PDT_CRON
-    if offset_hours == -8:
-        return PST_CRON
-    raise RuntimeError(f"Неожиданный UTC offset Vancouver: {offset_hours}")
-
-
-def scheduled_run_is_allowed(now: datetime) -> bool:
-    """Accept only the correct DST/PST cron and tolerate a delayed GitHub start."""
-    scheduled_cron = os.environ.get("SCHEDULED_CRON", "").strip()
-    expected_cron = expected_cron_for_vancouver(now)
-
-    # The second daily UTC cron is only a DST/PST fallback. Ignore whichever
-    # one does not correspond to 07:30 Vancouver on this date.
-    if scheduled_cron and scheduled_cron != expected_cron:
-        print(
-            f"Этот cron ({scheduled_cron}) сейчас не соответствует 07:30 Vancouver; "
-            f"ожидается {expected_cron}. Выходим без отправки."
-        )
-        return False
-
-    # Normal start is 07:30. GitHub Actions can start scheduled jobs late,
-    # so accept the intended 07:30 run through 16:00 Vancouver.
+def run_is_in_allowed_window(now: datetime) -> bool:
+    """Allow retries from 07:30 through 16:00 Vancouver time."""
     minutes = now.hour * 60 + now.minute
     if not (7 * 60 + 30 <= minutes <= 16 * 60):
         print(
@@ -177,7 +146,6 @@ def scheduled_run_is_allowed(now: datetime) -> bool:
             "07:30–16:00 Vancouver. Выходим без отправки."
         )
         return False
-
     return True
 
 
@@ -235,10 +203,6 @@ def run_form(test_mode: bool = False) -> None:
 
             print(f"Отправляю форму. Дата: {date_str}")
             submit_button.click(timeout=15000)
-
-            # The successful real test proved that Smartsheet redirects to
-            # ?confirm=true and shows the success confirmation. Require both
-            # before reporting success or sending the success email.
             page.wait_for_url("**?confirm=true", timeout=20000)
             page.get_by_text("Success!", exact=True).wait_for(state="visible", timeout=10000)
             page.get_by_text("We've captured your response.", exact=True).wait_for(
@@ -273,7 +237,6 @@ def main() -> int:
     now = datetime.now(ZoneInfo(TIMEZONE))
     today = now.date()
     test_mode = os.environ.get("TEST_MODE", "false").lower() == "true"
-    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
 
     if test_mode:
         print(f"TEST_MODE=true, Vancouver time: {now.isoformat()}")
@@ -284,18 +247,8 @@ def main() -> int:
         print(f"{today} не рабочий день — форма не отправляется.")
         return 0
 
-    if event_name == "schedule":
-        if not scheduled_run_is_allowed(now):
-            return 0
-    else:
-        # Safety for any non-test manual invocation: keep the same time window.
-        minutes = now.hour * 60 + now.minute
-        if not (7 * 60 + 30 <= minutes <= 16 * 60):
-            print(
-                f"Ручной production-запуск в {now.isoformat()} вне окна "
-                "07:30–16:00 Vancouver — выходим."
-            )
-            return 0
+    if not run_is_in_allowed_window(now):
+        return 0
 
     try:
         run_form(test_mode=False)
@@ -306,6 +259,7 @@ def main() -> int:
         )
         raise
 
+    Path("sent-marker.txt").write_text(str(today), encoding="utf-8")
     send_email(
         "Smartsheet Autofill — форма отправлена",
         f"Форма Woodfibre Daily Head Count успешно отправлена за {today}.",
