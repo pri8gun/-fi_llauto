@@ -157,6 +157,7 @@ def main() -> int:
     now = datetime.now(ZoneInfo(TIMEZONE))
     today = now.date()
     test_mode = os.environ.get("TEST_MODE", "false").lower() == "true"
+    manual_submit = os.environ.get("MANUAL_SUBMIT", "false").lower() == "true"
 
     if test_mode:
         print(f"TEST_MODE=true, Vancouver time: {now.isoformat()}")
@@ -165,7 +166,9 @@ def main() -> int:
     if not is_work_day(today):
         print(f"{today} не рабочий день — форма не отправляется.")
         return 0
-    if not run_is_in_allowed_window(now):
+    if manual_submit:
+        print(f"MANUAL_SUBMIT=true: разрешена разовая ручная отправка за {today} вне временного окна.")
+    elif not run_is_in_allowed_window(now):
         return 0
 
     try:
