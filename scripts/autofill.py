@@ -96,7 +96,7 @@ def run_form(test_mode=False) -> None:
     values = get_field_values(date_str)
     errors, failed = [], []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not test_mode)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("requestfailed", lambda r: failed.append(f"{r.url} :: {r.failure}"))
