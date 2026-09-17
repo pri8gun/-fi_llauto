@@ -69,14 +69,18 @@ jobs:
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
         run: xvfb-run -a python scripts/autofill.py
 
-      - name: Record successful submission
-        if: success() && steps.already_sent.outputs.skip != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.test_mode == true)
+      - name: Record confirmed submission
+        if: success() && steps.already_sent.outputs.skip != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.test_mode == true) && hashFiles('sent-marker.txt') != ''
         uses: actions/upload-artifact@v6
         with:
           name: smartsheet-sent-${{ steps.already_sent.outputs.today }}
           path: sent-marker.txt
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 30
+
+      - name: Report skipped production run
+        if: success() && steps.already_sent.outputs.skip != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.test_mode == true) && hashFiles('sent-marker.txt') == ''
+        run: echo "Форма не отправлялась в этом запуске (например, запуск вне окна 07:30–16:00 Vancouver). Маркер успеха не создаётся."
 
       - name: Upload diagnostics
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.test_mode == true) || failure() }}
