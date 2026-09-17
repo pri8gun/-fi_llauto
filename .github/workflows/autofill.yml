@@ -13,6 +13,11 @@ on:
         required: true
         default: true
         type: boolean
+      manual_submit:
+        description: 'Разовая реальная отправка вне окна 07:30–16:00'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -67,6 +72,7 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || false }}
+          MANUAL_SUBMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.manual_submit || false }}
         run: xvfb-run -a python scripts/autofill.py
 
       - name: Record confirmed submission
