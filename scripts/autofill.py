@@ -164,7 +164,7 @@ def main() -> int:
         run_form(test_mode=True)
         return 0
     # Temporary pause requested by the user: no real submissions through Oct 13, 2026 inclusive.
-    pause_through = date(2026, 10, 13)
+    pause_through = date(2026, 10, 27)
     if today <= pause_through:
         print(f"Автоотправка на паузе до {pause_through} включительно. Сегодня {today}; форма не отправляется.")
         return 0
