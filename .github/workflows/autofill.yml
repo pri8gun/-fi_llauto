@@ -2,9 +2,11 @@ name: Smartsheet Autofill
 
 on:
   schedule:
-    # Hourly candidates covering 07:30–16:00 Vancouver in both PDT and PST.
-    # The Python time-window check ignores candidates outside the local window.
-    - cron: '30 14-23 * * *'
+    # Every 5 minutes from 07:00 through 07:35 Vancouver, for PDT and PST.
+    # The Python local-time guard filters extra UTC candidates.
+    - cron: '0,5,10,15,20,25,30,35 14,15 * * *'
+    # Hourly backup from 08:30 through 15:30 local time, plus 16:00 boundary candidates.
+    - cron: '30 16-23 * * *'
     - cron: '30 0 * * *'
   workflow_dispatch:
     inputs:
@@ -14,7 +16,7 @@ on:
         default: true
         type: boolean
       manual_submit:
-        description: 'Разовая реальная отправка вне окна 07:30–16:00'
+        description: 'Разовая реальная отправка вне окна 07:00–16:00'
         required: true
         default: false
         type: boolean
@@ -86,7 +88,7 @@ jobs:
 
       - name: Report skipped production run
         if: success() && steps.already_sent.outputs.skip != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.test_mode == true) && hashFiles('sent-marker.txt') == ''
-        run: echo "Форма не отправлялась в этом запуске (например, запуск вне окна 07:30–16:00 Vancouver). Маркер успеха не создаётся."
+        run: echo "Форма не отправлялась в этом запуске (например, запуск вне окна 07:00–16:00 Vancouver). Маркер успеха не создаётся."
 
       - name: Upload diagnostics
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.test_mode == true) || failure() }}
