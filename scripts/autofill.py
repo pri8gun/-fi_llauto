@@ -84,8 +84,8 @@ def read_form_state(page) -> dict:
 
 def run_is_in_allowed_window(now: datetime) -> bool:
     minutes = now.hour * 60 + now.minute
-    if not (7 * 60 + 30 <= minutes <= 16 * 60):
-        print(f"Локальное время {now.isoformat()} вне допустимого окна 07:30–16:00 Vancouver. Выходим без отправки.")
+    if not (7 * 60 <= minutes <= 16 * 60):
+        print(f"Локальное время {now.isoformat()} вне допустимого окна 07:00–16:00 Vancouver. Выходим без отправки.")
         return False
     return True
 
