@@ -2,12 +2,9 @@ name: Smartsheet Autofill
 
 on:
   schedule:
-    # Every 5 minutes from 07:00 through 07:35 Vancouver, for PDT and PST.
-    # The Python local-time guard filters extra UTC candidates.
+    # Five-minute attempts for 07:00–07:35 Vancouver, covering PDT and PST.
+    # Late GitHub runs are rejected by the Python local-time guard.
     - cron: '0,5,10,15,20,25,30,35 14,15 * * *'
-    # Hourly backup from 08:30 through 15:30 local time, plus 16:00 boundary candidates.
-    - cron: '30 16-23 * * *'
-    - cron: '30 0 * * *'
   workflow_dispatch:
     inputs:
       test_mode:
@@ -16,7 +13,7 @@ on:
         default: true
         type: boolean
       manual_submit:
-        description: 'Разовая реальная отправка вне окна 07:00–16:00'
+        description: 'Ручной запуск (отправка только в 07:00–07:35)'
         required: true
         default: false
         type: boolean
