@@ -129,7 +129,7 @@ def run_form(test_mode=False) -> None:
 
             if not run_is_in_allowed_window(datetime.now(ZoneInfo(TIMEZONE))):
                 print("Окно отправки закончилось до нажатия Submit. Форма НЕ отправлена.")
-                return
+                return False
             print(f"НАЖИМАЮ РЕАЛЬНЫЙ SUBMIT. Дата формы: {date_str}")
             submit_button.click(timeout=15000)
             page.wait_for_timeout(5000)
@@ -154,6 +154,7 @@ def run_form(test_mode=False) -> None:
             raise
         finally:
             browser.close()
+    return True
 
 
 def main() -> int:
@@ -179,7 +180,8 @@ def main() -> int:
         return 0
 
     try:
-        run_form(test_mode=False)
+        if not run_form(test_mode=False):
+            return 0
     except Exception as exc:
         try:
             send_email("Smartsheet Autofill — ОШИБКА", f"Не удалось отправить форму за {today}.\n\nОшибка: {exc}")
