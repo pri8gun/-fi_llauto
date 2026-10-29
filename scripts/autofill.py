@@ -84,8 +84,8 @@ def read_form_state(page) -> dict:
 
 def run_is_in_allowed_window(now: datetime) -> bool:
     minutes = now.hour * 60 + now.minute
-    if not (7 * 60 <= minutes <= 16 * 60):
-        print(f"Локальное время {now.isoformat()} вне допустимого окна 07:00–16:00 Vancouver. Выходим без отправки.")
+    if not (7 * 60 <= minutes < 7 * 60 + 36):
+        print(f"Локальное время {now.isoformat()} вне допустимого окна 07:00–07:35 Vancouver. Выходим без отправки.")
         return False
     return True
 
@@ -127,6 +127,9 @@ def run_form(test_mode=False) -> None:
             if not submit_button.is_enabled():
                 raise RuntimeError("Submit остаётся disabled после заполнения всех полей.")
 
+            if not run_is_in_allowed_window(datetime.now(ZoneInfo(TIMEZONE))):
+                print("Окно отправки закончилось до нажатия Submit. Форма НЕ отправлена.")
+                return
             print(f"НАЖИМАЮ РЕАЛЬНЫЙ SUBMIT. Дата формы: {date_str}")
             submit_button.click(timeout=15000)
             page.wait_for_timeout(5000)
@@ -172,9 +175,7 @@ def main() -> int:
     if not is_work_day(today):
         print(f"{today} не рабочий день — форма не отправляется.")
         return 0
-    if manual_submit:
-        print(f"MANUAL_SUBMIT=true: разрешена разовая ручная отправка за {today} вне временного окна.")
-    elif not run_is_in_allowed_window(now):
+    if not run_is_in_allowed_window(now):
         return 0
 
     try:
