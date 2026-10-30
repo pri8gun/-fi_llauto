@@ -1,10 +1,6 @@
 name: Smartsheet Autofill
 
 on:
-  schedule:
-    # Five-minute attempts for 07:00–07:35 Vancouver, covering PDT and PST.
-    # Late GitHub runs are rejected by the Python local-time guard.
-    - cron: '0,5,10,15,20,25,30,35 14,15 * * *'
   workflow_dispatch:
     inputs:
       test_mode:
