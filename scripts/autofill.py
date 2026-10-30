@@ -96,7 +96,15 @@ def run_form(test_mode=False) -> None:
     values = get_field_values(date_str)
     errors, failed = [], []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        chromium_executable = os.environ.get("CHROMIUM_EXECUTABLE")
+        if chromium_executable:
+            browser = p.chromium.launch(
+                executable_path=chromium_executable,
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+        else:
+            browser = p.chromium.launch(headless=False)
         page = browser.new_page(viewport={"width": 1440, "height": 1200})
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("requestfailed", lambda r: failed.append(f"{r.url} :: {r.failure}"))
