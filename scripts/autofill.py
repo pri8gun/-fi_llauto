@@ -206,6 +206,10 @@ def main() -> int:
     if not is_work_day(today):
         print(f"{today} не рабочий день — форма не отправляется.")
         return 0
+    marker = Path("sent-marker.txt")
+    if marker.exists() and marker.read_text(encoding="utf-8").strip() == str(today):
+        print(f"Форма за {today} уже отправлена с этого устройства. Повторный Submit заблокирован.")
+        return 0
     if not run_is_in_allowed_window(now):
         return 0
 
@@ -214,13 +218,17 @@ def main() -> int:
             return 0
     except Exception as exc:
         try:
-            send_email("Smartsheet Autofill — ОШИБКА", f"Не удалось отправить форму за {today}.\n\nОшибка: {exc}")
+            if os.environ.get("SMTP_USER") and os.environ.get("SMTP_PASS"):
+                send_email("Smartsheet Autofill — ОШИБКА", f"Не удалось отправить форму за {today}.\n\nОшибка: {exc}")
         except Exception as email_exc:
             print(f"Не удалось отправить email об ошибке: {email_exc}")
         raise
 
-    Path("sent-marker.txt").write_text(str(today), encoding="utf-8")
+    marker.write_text(str(today), encoding="utf-8")
     try:
+        if not os.environ.get("SMTP_USER") or not os.environ.get("SMTP_PASS"):
+            print("SMTP не настроен; email-уведомление пропущено.")
+            return 0
         send_email("Smartsheet Autofill — форма отправлена", f"Форма Woodfibre Daily Head Count успешно отправлена за {today}.")
     except Exception as email_exc:
         print(f"Форма отправлена, но email-уведомление не удалось отправить: {email_exc}")
