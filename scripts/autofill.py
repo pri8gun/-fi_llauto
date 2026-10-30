@@ -112,10 +112,21 @@ def run_form(test_mode=False) -> None:
         try:
             response = page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
             status = response.status if response else None
-            page.wait_for_timeout(10000)
-            diagnostics(page, status)
             inputs = page.locator('input[type="text"]')
-            if inputs.count() < 6: raise RuntimeError(f"Найдено только {inputs.count()} input[type=text].")
+            try:
+                inputs.nth(5).wait_for(state="attached", timeout=45000)
+            except Exception:
+                diagnostics(page, status)
+                print(f"FORM_DEBUG URL={page.url!r} HTTP_STATUS={status} TITLE={page.title()!r}", flush=True)
+                print(f"FORM_DEBUG FRAMES={len(page.frames)} TEXT_INPUTS={inputs.count()}", flush=True)
+                for index, frame in enumerate(page.frames):
+                    try:
+                        print(f"FORM_DEBUG FRAME_{index} URL={frame.url!r} INPUTS={frame.locator('input').count()}", flush=True)
+                    except Exception as frame_exc:
+                        print(f"FORM_DEBUG FRAME_{index} ERROR={frame_exc}", flush=True)
+                print("FORM_DEBUG Подробности сохранены локально в diagnostics/. Не публикуйте файлы диагностики.", flush=True)
+                raise RuntimeError("Поля Smartsheet не загрузились за 45 секунд. Проверьте FORM_DEBUG выше.")
+            diagnostics(page, status)
 
             fill_like_bookmarklet(page, values)
             state = read_form_state(page)
