@@ -21,8 +21,9 @@ if [ "$MODE" != "live" ]; then export TEST_MODE=true; else export TEST_MODE=fals
     set -a
     . /root/smartsheet.env
     set +a
+    export TEST_MODE="$1"
     exec /root/smartsheet-venv/bin/python scripts/autofill.py
-  '
+  ' _ "$TEST_MODE"
   rc=$?
   echo "Exit code: $rc"
 } >> "$LOG" 2>&1
