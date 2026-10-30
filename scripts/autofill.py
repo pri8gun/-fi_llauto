@@ -101,7 +101,12 @@ def run_form(test_mode=False) -> None:
             browser = p.chromium.launch(
                 executable_path=chromium_executable,
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-features=UseDBus,OpaqueResponseBlocking",
+                ],
             )
         else:
             browser = p.chromium.launch(headless=False)
