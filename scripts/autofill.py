@@ -110,7 +110,13 @@ def run_form(test_mode=False) -> None:
             )
         else:
             browser = p.chromium.launch(headless=False)
-        page = browser.new_page(viewport={"width": 1440, "height": 1200})
+        page = browser.new_page(
+            viewport={"width": 1440, "height": 1200},
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+            ) if chromium_executable else None,
+        )
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("requestfailed", lambda r: failed.append(f"{r.url} :: {r.failure}"))
         status = None
