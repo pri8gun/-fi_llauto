@@ -31,7 +31,7 @@ trap 'rm -f "$RUN_OUTPUT"; rmdir "$LOCK" 2>/dev/null || true' EXIT
   echo "Exit code: $rc"
 } >> "$LOG" 2>&1
 if [ "$MODE" = "live" ] && command -v termux-notification >/dev/null 2>&1; then
-  if grep -q "успешно отправлена и подтверждена Smartsheet" "$RUN_OUTPUT"; then
+  if [ "$rc" -eq 0 ] && grep -Fq "Success!" "$RUN_OUTPUT" && grep -Fq "We\x27ve captured your response." "$RUN_OUTPUT"; then
     termux-notification --id 1002 --title "Smartsheet: отправлено" --content "Форма за $(date +%F) успешно отправлена." >/dev/null 2>&1 || true
   elif [ "$rc" -ne 0 ]; then
     termux-notification --id 1003 --title "Smartsheet: ошибка" --content "Ошибка автоотправки $(date +%F). Проверь журнал Termux." >/dev/null 2>&1 || true
