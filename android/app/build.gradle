@@ -1,0 +1,7 @@
+plugins { id 'com.android.application' }
+android {
+ namespace 'com.smartsubmit.test'
+ compileSdk 35
+ defaultConfig { applicationId 'com.smartsubmit.test'; minSdk 26; targetSdk 34; versionCode 1; versionName '0.1-test' }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
